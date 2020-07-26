@@ -23,14 +23,17 @@ uptodate_count = 0
 
 gl = gitlab.Gitlab.from_config('somewhere', ['python-gitlab.cfg'])
 
-parser = argparse.ArgumentParser(description="Gitlab Group Backup Script")
-parser.add_argument('-v', '--verbose', action="store_true", default=False, help="verbose mode, all output enabled")
-parser.add_argument('-q', '--quite', action="store_true", default=False, help="quite mode, no output except errors")
-parser.add_argument('-r', '--report', action="store_true", default=False, help="output report after backup is finished")
+parser = argparse.ArgumentParser(description="Gitlab Backup Script")
+parser.add_argument('-v', '--verbose', action="store_true", default=False, help="Verbose mode, all output enabled")
+parser.add_argument('-q', '--quite', action="store_true", default=False, help="Quite mode, no output except errors")
+parser.add_argument('-r', '--report', action="store_true", default=False, help="Output report after backup is finished")
 parser.add_argument('-d', '--directory', action='store', type=str, default='.',
-                    help="directory to save the backups in, default is folder you are currently in")
-parser.add_argument(dest='group_ids', type=int, nargs='+', default=[],
-                    help="Groups IDs to parse for Repositorys")
+                    help="Directory to save the backups in, default is folder you are currently in")
+parser.add_argument('-g', '--groups',dest='group_ids', type=int, nargs='+', default=[],
+                    help="One or more groups IDs to parse for repositorys")
+parser.add_argument('-p', '--personal',action="store_true", default=False, help="Enable downloading personal projects of account used.")
+parser.add_argument('-t', '--test',action="store_true", default=False, help="Test mode / dry run. Just collect all projects but don't download anything.")
+
 args = parser.parse_args()
 
 
@@ -50,15 +53,19 @@ my_env["LANGUAGE"] = "en_US.UTF-8"
 
 
 def check_args():
+    logger.debug("Checking your arguments....")
     if args.verbose & args.quite:
         logger.fatal("-q and -v are not working at the same time, think about it again ;)")
-        exit(-1)
+        exit(1)
     if args.directory == '.':
         logger.debug("Directory parameter not set, using folder you are currently in")
     elif not os.path.isdir(args.directory):
         logger.fatal(args.directory+" is not a valid directory")
-        exit(-1)
-
+        exit(2)
+    if (len(args.group_ids)) == 0 and not args.personal:
+        logger.fatal("No projects to download. Please  use -g/--groups or -p/--personal.")
+        exit(3)
+    logger.debug("Done checking your arguments.")
 
 def print_report():
     print("Done. Found %s projects in %s groups (%s subgroups)." % (project_count,group_count,subgroup_count))
@@ -109,41 +116,57 @@ def proc_output(output, error, name):
 
 if __name__ == '__main__':
     check_args()
+
+    if args.personal:
+        logger.debug("Searching for personal projects on your account...")
+        projects = gl.projects.list(owned=True,all=True)
+        for project in projects:
+            logger.debug('Found personal projects:  ' + project.ssh_url_to_repo)
+            if not (project.ssh_url_to_repo in [i[0] for i in urls]):
+                urls.append((project.ssh_url_to_repo, project.path))
+        logger.debug("Done searching for personal projects on your account.")
+
+
     for group_id in args.group_ids:
+        logger.debug("Searching for group with ID "+str(group_id)+"...")
         group_count += 1
         group = gl.groups.get(group_id)
-        logger.debug('Searching in Group: ' + group.path)
+        logger.debug('Searching in group: ' + group.path)
 
-        subgroups = group.subgroups.list()
+        subgroups = group.subgroups.list(all=True)
 
-        projects = group.projects.list()
+        projects = group.projects.list(all=True)
 
         for project in projects:
-            logger.debug('Found Projects:  ' + project.ssh_url_to_repo)
+            logger.debug('Found projects:  ' + project.ssh_url_to_repo)
             urls.append((project.ssh_url_to_repo, group.path + ":" + project.path))
 
         for subgroup in subgroups:
-            logger.debug('Searching in Subgroup: ' + subgroup.path)
+            logger.debug('Searching in subgroup: ' + subgroup.path)
             sgroup = gl.groups.get(subgroup.id)
-            projects = sgroup.projects.list()
+            projects = sgroup.projects.list(all=True)
             subgroup_count += 1
             for project in projects:
-                logger.debug('Found Projects:  ' + project.ssh_url_to_repo)
-                urls.append((project.ssh_url_to_repo, group.path + ":" + subgroup.path + ":" + project.path))
+                logger.debug('Found projects:  ' + project.ssh_url_to_repo)
+                if not (project.ssh_url_to_repo in [i[0] for i in urls]):
+                    urls.append((project.ssh_url_to_repo, group.path + ":" + subgroup.path + ":" + project.path))
+                else: 
+                    logger.debug("Project already in list, skipping.")
 
     # Clone them all to the directory args.directory
 
-    for url, name in urls:
-        project_count += 1
-        if os.path.isdir(args.directory + "/" + name):
-            if not is_empty_proj(args.directory, name):
-                out, err = git_pull()
-                proc_output(out,err,name)
-        else:
-            new_count += 1
-            out, err = git_clone(url)
-            proc_output(out, err, name)
-            is_empty_proj(args.directory, name)
+    if not args.test:
+        for url, name in urls:
+            project_count += 1
+            if os.path.isdir(args.directory + "/" + name):
+                if not is_empty_proj(args.directory, name):
+                    out, err = git_pull()
+                    proc_output(out,err,name)
+            else:
+                new_count += 1
+                out, err = git_clone(url)
+                proc_output(out, err, name)
+                is_empty_proj(args.directory, name)
 
     if args.report:
         print_report()
