@@ -20,6 +20,7 @@ empty_count = 0
 subgroup_count = 0
 group_count = 0
 uptodate_count = 0
+groupStr = ""
 
 gl = gitlab.Gitlab.from_config('somewhere', ['python-gitlab.cfg'])
 
@@ -114,6 +115,35 @@ def proc_output(output, error, name):
                     update_count += 1
 
 
+def recursive_group_search(gid, level, path=""):
+    global group_count, urls, subgroup_count
+    groupStr = "sub-"*level
+    groupStr += "group"
+    
+    if level == 0:
+        group_count += 1
+    else:
+        subgroup_count += 1
+
+    group = gl.groups.get(gid, include_subgroups=True)
+    path += group.path + ":"
+
+    logger.debug("Searching in "+groupStr+": " + path)
+
+    projects = group.projects.list(all=True)
+    for project in projects:
+        logger.debug('Found projects:  ' + project.ssh_url_to_repo)
+        if not (project.ssh_url_to_repo in [i[0] for i in urls]):
+            urls.append((project.ssh_url_to_repo, path + project.path))
+        else: 
+            logger.debug("Project already in list, skipping.")
+
+
+    subgroups = group.subgroups.list(all=True)
+    for subgroup in subgroups:
+        recursive_group_search(subgroup.id, level+1, path=path)
+
+
 if __name__ == '__main__':
     check_args()
 
@@ -129,29 +159,7 @@ if __name__ == '__main__':
 
     for group_id in args.group_ids:
         logger.debug("Searching for group with ID "+str(group_id)+"...")
-        group_count += 1
-        group = gl.groups.get(group_id)
-        logger.debug('Searching in group: ' + group.path)
-
-        subgroups = group.subgroups.list(all=True)
-
-        projects = group.projects.list(all=True)
-
-        for project in projects:
-            logger.debug('Found projects:  ' + project.ssh_url_to_repo)
-            urls.append((project.ssh_url_to_repo, group.path + ":" + project.path))
-
-        for subgroup in subgroups:
-            logger.debug('Searching in subgroup: ' + subgroup.path)
-            sgroup = gl.groups.get(subgroup.id)
-            projects = sgroup.projects.list(all=True)
-            subgroup_count += 1
-            for project in projects:
-                logger.debug('Found projects:  ' + project.ssh_url_to_repo)
-                if not (project.ssh_url_to_repo in [i[0] for i in urls]):
-                    urls.append((project.ssh_url_to_repo, group.path + ":" + subgroup.path + ":" + project.path))
-                else: 
-                    logger.debug("Project already in list, skipping.")
+        recursive_group_search(group_id,0)
 
     # Clone them all to the directory args.directory
 
