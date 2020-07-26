@@ -1,0 +1,5 @@
+requests>=2.4.2
+six
+coloredlogs
+python-gitlab
+argparse
