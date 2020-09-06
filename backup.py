@@ -61,8 +61,8 @@ def check_args():
     if args.directory == '.':
         logger.debug("Directory parameter not set, using folder you are currently in")
     elif not os.path.isdir(args.directory):
-        logger.fatal(args.directory+" is not a valid directory")
-        exit(2)
+        logger.info(args.directory+" is not a existing directory, creating it now.")
+        os.makedirs(args.directory, exist_ok=True)
     if (len(args.group_ids)) == 0 and not args.personal:
         logger.fatal("No projects to download. Please  use -g/--groups or -p/--personal.")
         exit(3)
